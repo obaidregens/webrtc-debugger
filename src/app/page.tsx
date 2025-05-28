@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Copy, Send, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { Copy, Send, Trash2, Wifi, WifiOff, Settings, Check, X } from 'lucide-react';
 
 interface IceServer {
   urls: string | string[];
@@ -40,6 +40,12 @@ export default function WebRTCDataTest() {
   const [iceServersLoading, setIceServersLoading] = useState<boolean>(true);
   const [mediaPermissionState, setMediaPermissionState] = useState<'none' | 'requesting' | 'granted' | 'denied'>('none');
   const [hasMediaStream, setHasMediaStream] = useState<boolean>(false);
+  
+  // Custom ICE servers configuration
+  const [showCustomIceConfig, setShowCustomIceConfig] = useState<boolean>(false);
+  const [customIceServersText, setCustomIceServersText] = useState<string>('');
+  const [usingCustomIceServers, setUsingCustomIceServers] = useState<boolean>(false);
+  const [customIceServersError, setCustomIceServersError] = useState<string>('');
 
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const dataChannel = useRef<RTCDataChannel | null>(null);
@@ -97,6 +103,91 @@ export default function WebRTCDataTest() {
       addMessage('🔇 Released microphone', 'system');
     }
   };
+
+  // Apply custom ICE servers configuration
+  const applyCustomIceServers = (): void => {
+    try {
+      setCustomIceServersError('');
+      if (!customIceServersText.trim()) {
+        setCustomIceServersError('Please enter ICE servers configuration');
+        return;
+      }
+
+      const parsedServers: IceServer[] = JSON.parse(customIceServersText);
+      
+      // Validate the structure
+      if (!Array.isArray(parsedServers)) {
+        throw new Error('ICE servers must be an array');
+      }
+
+      for (const server of parsedServers) {
+        if (!server.urls) {
+          throw new Error('Each ICE server must have a "urls" property');
+        }
+        if (typeof server.urls !== 'string' && !Array.isArray(server.urls)) {
+          throw new Error('ICE server "urls" must be a string or array of strings');
+        }
+      }
+
+      setIceServers(parsedServers);
+      setUsingCustomIceServers(true);
+      setShowCustomIceConfig(false);
+      addMessage(`✅ Applied ${parsedServers.length} custom ICE server(s)`, 'system');
+      
+      // Log the servers being used
+      parsedServers.forEach((server, index) => {
+        const urls = Array.isArray(server.urls) ? server.urls.join(', ') : server.urls;
+        const credentials = server.username ? ' (with credentials)' : '';
+        addMessage(`   Server ${index + 1}: ${urls}${credentials}`, 'ice-debug');
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setCustomIceServersError(`Invalid JSON or structure: ${errorMessage}`);
+    }
+  };
+
+  // Reset to default ICE servers
+  const resetToDefaultIceServers = async (): Promise<void> => {
+    setUsingCustomIceServers(false);
+    setCustomIceServersText('');
+    setCustomIceServersError('');
+    await fetchDefaultIceServers();
+  };
+
+  // Fetch default ICE servers
+  const fetchDefaultIceServers = async (): Promise<void> => {
+    try {
+      setIceServersLoading(true);
+      addMessage('🌐 Loading default ICE servers...', 'system');
+      
+      const response = await fetch('/api/ice', {
+        method: 'POST',
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const { iceServers: servers }: { iceServers: IceServer[] } = await response.json();
+      setIceServers(servers);
+      addMessage(`✅ Loaded ${servers.length} default ICE server(s)`, 'system');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      addMessage(`⚠️ Failed to load default ICE servers: ${errorMessage}`, 'error');
+      // Fallback to default STUN servers
+      const fallbackServers: IceServer[] = [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
+      ];
+      setIceServers(fallbackServers);
+      addMessage('Using fallback STUN servers', 'system');
+    } finally {
+      setIceServersLoading(false);
+    }
+  };
+
   const parseICECandidate = (candidate: RTCIceCandidate): ICECandidateInfo | null => {
     try {
       const parts = candidate.candidate.split(' ');
@@ -204,6 +295,7 @@ export default function WebRTCDataTest() {
     
     return '';
   };
+
   const getCandidateTypeDescription = (type: string): string => {
     const types: Record<string, string> = {
       'host': 'Direct connection (same network)',
@@ -216,40 +308,10 @@ export default function WebRTCDataTest() {
 
   // Load ICE servers on component mount
   useEffect(() => {
-    const fetchIceServers = async (): Promise<void> => {
-      try {
-        setIceServersLoading(true);
-        addMessage('🌐 Loading ICE servers...', 'system');
-        
-        const response = await fetch('/api/ice', {
-          method: 'POST',
-        });
-        
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const { iceServers: servers }: { iceServers: IceServer[] } = await response.json();
-        setIceServers(servers);
-        addMessage(`✅ Loaded ${servers.length} ICE server(s)`, 'system');
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        addMessage(`⚠️ Failed to load ICE servers: ${errorMessage}`, 'error');
-        // Fallback to default STUN servers
-        const fallbackServers: IceServer[] = [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' }
-        ];
-        setIceServers(fallbackServers);
-        addMessage('Using fallback STUN servers', 'system');
-      } finally {
-        setIceServersLoading(false);
-      }
-    };
-
-    fetchIceServers();
-  }, []);
+    if (!usingCustomIceServers) {
+      fetchDefaultIceServers();
+    }
+  }, [usingCustomIceServers]);
 
   // Initialize WebRTC
   const initializeWebRTC = async (asInitiator: boolean = false): Promise<void> => {
@@ -273,7 +335,8 @@ export default function WebRTCDataTest() {
         iceCandidatePoolSize: 10
       });
 
-      addMessage(`🔧 Initialized WebRTC with ${iceServers.length} ICE servers`, 'ice-debug');
+      const iceServerType = usingCustomIceServers ? 'custom' : 'default';
+      addMessage(`🔧 Initialized WebRTC with ${iceServers.length} ${iceServerType} ICE servers`, 'ice-debug');
       
       // Add media stream tracks if available (helps with connectivity)
       if (localStream.current && mediaGranted) {
@@ -774,6 +837,24 @@ export default function WebRTCDataTest() {
     }
   };
 
+  // Sample ICE servers configuration for the textarea placeholder
+  const sampleIceConfig = `[
+  {
+    "urls": "stun:stun.l.google.com:19302"
+  },
+  {
+    "urls": "stun:stun1.l.google.com:19302"
+  },
+  {
+    "urls": [
+      "turn:your-turn-server.com:3478",
+      "turns:your-turn-server.com:5349"
+    ],
+    "username": "your-username",
+    "credential": "your-password"
+  }
+]`;
+
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       <div className="text-center">
@@ -813,7 +894,62 @@ export default function WebRTCDataTest() {
 
       {/* ICE Servers Configuration */}
       <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold mb-4">ICE Servers</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold">ICE Servers Configuration</h2>
+          <div className="flex items-center space-x-2">
+            {usingCustomIceServers && (
+              <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">Custom</span>
+            )}
+            <button
+              onClick={() => setShowCustomIceConfig(!showCustomIceConfig)}
+              className="flex items-center space-x-1 px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+            >
+              <Settings className="w-4 h-4" />
+              <span>Configure</span>
+            </button>
+          </div>
+        </div>
+
+        {showCustomIceConfig && (
+          <div className="mb-4 p-4 bg-gray-50 rounded-lg border">
+            <h3 className="text-sm font-medium text-gray-700 mb-2">Custom ICE Servers (JSON)</h3>
+            <textarea
+              value={customIceServersText}
+              onChange={(e) => setCustomIceServersText(e.target.value)}
+              placeholder={sampleIceConfig}
+              className="w-full h-40 p-3 border border-gray-300 rounded text-xs font-mono resize-none"
+            />
+            {customIceServersError && (
+              <div className="mt-2 text-sm text-red-600 bg-red-50 p-2 rounded">
+                {customIceServersError}
+              </div>
+            )}
+            <div className="mt-3 flex items-center space-x-2">
+              <button
+                onClick={applyCustomIceServers}
+                disabled={!customIceServersText.trim()}
+                className="flex items-center space-x-1 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm"
+              >
+                <Check className="w-4 h-4" />
+                <span>Apply Custom Config</span>
+              </button>
+              <button
+                onClick={resetToDefaultIceServers}
+                className="flex items-center space-x-1 px-3 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 text-sm"
+              >
+                <X className="w-4 h-4" />
+                <span>Reset to Default</span>
+              </button>
+            </div>
+            <div className="mt-2 text-xs text-gray-500">
+              <p>• Enter ICE servers as a JSON array</p>
+              <p>• Include STUN servers for NAT traversal</p>
+              <p>• Include TURN servers with credentials for relay connections</p>
+              <p>• Each server needs a "urls" property (string or array)</p>
+            </div>
+          </div>
+        )}
+
         {iceServersLoading ? (
           <div className="text-center py-4">
             <div className="text-gray-500">Loading ICE servers...</div>
@@ -823,8 +959,14 @@ export default function WebRTCDataTest() {
             {iceServers.length > 0 ? (
               iceServers.map((server, index) => (
                 <div key={index} className="text-sm text-gray-600 bg-gray-50 p-2 rounded">
-                  {Array.isArray(server.urls) ? server.urls.join(', ') : server.urls}
-                  {server.username && <span className="ml-2 text-gray-400">(with credentials)</span>}
+                  <div className="font-mono">
+                    {Array.isArray(server.urls) ? server.urls.join(', ') : server.urls}
+                  </div>
+                  {server.username && (
+                    <div className="text-xs text-gray-400 mt-1">
+                      Username: {server.username} (with credentials)
+                    </div>
+                  )}
                 </div>
               ))
             ) : (
@@ -1046,6 +1188,7 @@ export default function WebRTCDataTest() {
         <p>One should be the initiator, the other the receiver. Copy/paste the offers and answers between them.</p>
         <p className="mt-2 text-purple-600 font-medium">Purple messages show detailed ICE connectivity debugging information.</p>
         <p className="mt-1 text-blue-600">💡 For best results in Firefox, grant microphone permission when prompted.</p>
+        <p className="mt-1 text-green-600">🔧 Use the Configure button to test with custom STUN/TURN servers.</p>
       </div>
     </div>
   );
